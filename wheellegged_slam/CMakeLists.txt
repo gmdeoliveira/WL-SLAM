@@ -56,7 +56,7 @@ find_package(catkin REQUIRED COMPONENTS
 find_package(Eigen3 REQUIRED)
 find_package(PCL 1.8 REQUIRED)
 find_package( Sophus REQUIRED )
-set(Sophus_LIBRARIES libSophus.so)
+set(Sophus_LIBRARIES /home/gabriel/Sophus/build/libSophus.so)
 
 find_package( GTSAMCMakeTools )
 find_package(GTSAM REQUIRED QUIET)
