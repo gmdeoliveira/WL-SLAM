@@ -109,22 +109,23 @@ gtsam::ISAM2 *isam;
 gtsam::Values isamCurrentEstimate;
 Eigen::MatrixXd poseCovariance;
 
-// 局部关键帧构建的map点云，对应kdtree，用于scan-to-map找相邻点
+// The point cloud map constructed from local keyframes corresponds to a kdtree and is used for scan-to-map to find neighboring points. 
+// [局部关键帧构建的map点云，对应kdtree，用于scan-to-map找相邻点]
 pcl::KdTreeFLANN<PointType>::Ptr kdtreeCornerFromMap(new pcl::KdTreeFLANN<PointType>());
 pcl::KdTreeFLANN<PointType>::Ptr kdtreeSurfFromMap(new pcl::KdTreeFLANN<PointType>());
 
 pcl::KdTreeFLANN<PointType>::Ptr kdtreeSurroundingKeyPoses(new pcl::KdTreeFLANN<PointType>());
 pcl::KdTreeFLANN<PointType>::Ptr kdtreeHistoryKeyPoses(new pcl::KdTreeFLANN<PointType>());
 
-/*loop clousre*/
+/*loop closure*/
 bool startFlag = true;
 bool loopClosureEnableFlag;
-float loopClosureFrequency; //   回环检测频率
+float loopClosureFrequency; // Loop closure detection frequency. [回环检测频率]
 int surroundingKeyframeSize;
-float historyKeyframeSearchRadius;   // 回环检测 radius kdtree搜索半径
-float historyKeyframeSearchTimeDiff; //  帧间时间阈值
-int historyKeyframeSearchNum;        //   回环时多少个keyframe拼成submap
-float historyKeyframeFitnessScore;   // icp 匹配阈值
+float historyKeyframeSearchRadius;   // Loop closure detection radius (kd-tree search radius) [回环检测 radius kdtree搜索半径]
+float historyKeyframeSearchTimeDiff; // Inter-frame time threshold [帧间时间阈值]
+int historyKeyframeSearchNum;        // Number of keyframes used to construct the submap for loop closure detection [回环时多少个keyframe拼成submap]
+float historyKeyframeFitnessScore;   // ICP matching threshold [ICP匹配阈值]
 bool potentialLoopFlag = false;
 
 
@@ -139,7 +140,7 @@ deque<gtsam::Vector3> vecgravity;
 
 int frameflag = 0;
 
-//轮腿参数
+// Wheel Leg Parameters [轮腿参数]
 double thigh_length;
 double shank_length;
 double wheel_radius;
@@ -241,7 +242,7 @@ class GravitybetweenFactor:public gtsam::NoiseModelFactor2<gtsam::Pose3,gtsam::P
         return (gtsam::Vector3()<< p1.rotation().inverse()*pre_gravity_-p2.rotation().inverse()*cur_gravity_).finished();
     }
 
-};//重力因子自定义
+};//Custom gravity factor. [重力因子自定义]
 
 void addGravityFactor();
 

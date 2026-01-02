@@ -85,9 +85,9 @@ bool saveFrame()
     pcl::getTranslationAndEulerAngles(transBetween, x, y, z, roll, pitch, yaw); 
 
 
-    if (abs(roll) < surroundingkeyframeAddingAngleThreshold &&
+    if (abs(roll)  < surroundingkeyframeAddingAngleThreshold &&
         abs(pitch) < surroundingkeyframeAddingAngleThreshold &&
-        abs(yaw) < surroundingkeyframeAddingAngleThreshold &&
+        abs(yaw)   < surroundingkeyframeAddingAngleThreshold &&
         sqrt(x * x + y * y + z * z) < surroundingkeyframeAddingDistThreshold)
         return false;
     return true;
@@ -119,8 +119,8 @@ void addOdomFactor()
 {
     if (cloudKeyPoses3D->points.empty())
     {
-
-        gtsam::noiseModel::Diagonal::shared_ptr priorNoise = gtsam::noiseModel::Diagonal::Variances((gtsam::Vector(6) <<1e-12, 1e-12, 1e-12, 1e-12, 1e-12, 1e-12).finished()); // rad*rad, meter*meter   // indoor 1e-12, 1e-12, 1e-12, 1e-12, 1e-12, 1e-12    //  1e-2, 1e-2, M_PI*M_PI, 1e8, 1e8, 1e8
+        // rad*rad, meter*meter   // indoor 1e-12, 1e-12, 1e-12, 1e-12, 1e-12, 1e-12    //  1e-2, 1e-2, M_PI*M_PI, 1e8, 1e8, 1e8
+        gtsam::noiseModel::Diagonal::shared_ptr priorNoise = gtsam::noiseModel::Diagonal::Variances((gtsam::Vector(6) <<1e-12, 1e-12, 1e-12, 1e-12, 1e-12, 1e-12).finished()); 
         gtSAMgraph.add(gtsam::PriorFactor<gtsam::Pose3>(0, trans2gtsamPose(transformTobeMapped), priorNoise));
 
         initialEstimate.insert(0, trans2gtsamPose(transformTobeMapped));
@@ -129,7 +129,7 @@ void addOdomFactor()
     {
 
         gtsam::noiseModel::Diagonal::shared_ptr odometryNoise = gtsam::noiseModel::Diagonal::Variances((gtsam::Vector(6) << 1e-9, 1e-9, 1e-9, 1e-4, 1e-4, 1e-3).finished());
-        gtsam::Pose3 poseFrom = pclPointTogtsamPose3(cloudKeyPoses6D->points.back()); /// pre
+        gtsam::Pose3 poseFrom = pclPointTogtsamPose3(cloudKeyPoses6D->points.back()); // pre
         gtsam::Pose3 poseTo = trans2gtsamPose(transformTobeMapped);                   // cur
 
         gtSAMgraph.add(gtsam::BetweenFactor<gtsam::Pose3>(cloudKeyPoses3D->size() - 1, cloudKeyPoses3D->size(), poseFrom.between(poseTo), odometryNoise));
@@ -197,7 +197,7 @@ sensor_msgs::PointCloud2 publishCloud(ros::Publisher *thisPub, pcl::PointCloud<P
 
 void visualizeLoopClosure()
 {
-    ros::Time timeLaserInfoStamp = ros::Time().fromSec(lidar_end_time); //  时间戳
+    ros::Time timeLaserInfoStamp = ros::Time().fromSec(lidar_end_time); // Timestamp [时间戳]
     string odometryFrame = "camera_init";
 
     if (loopIndexContainer.empty())
@@ -326,7 +326,7 @@ void loopFindNearKeyframes(pcl::PointCloud<PointType>::Ptr &nearKeyframes, const
 
 void performLoopClosure()
 {
-    ros::Time timeLaserInfoStamp = ros::Time().fromSec(lidar_end_time); //  时间戳
+    ros::Time timeLaserInfoStamp = ros::Time().fromSec(lidar_end_time); // Timestamp [时间戳]
     string odometryFrame = "camera_init";
 
     if (cloudKeyPoses3D->points.empty() == true)
@@ -349,8 +349,8 @@ void performLoopClosure()
     }
 
 
-    pcl::PointCloud<PointType>::Ptr cureKeyframeCloud(new pcl::PointCloud<PointType>()); //  cue keyframe
-    pcl::PointCloud<PointType>::Ptr prevKeyframeCloud(new pcl::PointCloud<PointType>()); //   history keyframe submap
+    pcl::PointCloud<PointType>::Ptr cureKeyframeCloud(new pcl::PointCloud<PointType>()); // cue keyframe
+    pcl::PointCloud<PointType>::Ptr prevKeyframeCloud(new pcl::PointCloud<PointType>()); // history keyframe submap
     {
 
         loopFindNearKeyframes(cureKeyframeCloud, loopKeyCur, 0); 
@@ -377,7 +377,7 @@ void performLoopClosure()
     if (icp.hasConverged() == false || icp.getFitnessScore() > historyKeyframeFitnessScore)
         return;
 
-    std::cout << "icp  success  " << std::endl;
+    std::cout << "icp success" << std::endl;
 
 
     if (pubIcpKeyFrames.getNumSubscribers() != 0)
@@ -401,7 +401,7 @@ void performLoopClosure()
 
     gtsam::Pose3 poseTo = pclPointTogtsamPose3(copy_cloudKeyPoses6D->points[loopKeyPre]);
     gtsam::Vector Vector6(6);
-    float noiseScore = icp.getFitnessScore() ; //  loop_clousre  noise from icp
+    float noiseScore = icp.getFitnessScore() ; //  loop closure noise from icp
     Vector6 << noiseScore, noiseScore, noiseScore, noiseScore, noiseScore, noiseScore;
     gtsam::noiseModel::Diagonal::shared_ptr constraintNoise = gtsam::noiseModel::Diagonal::Variances(Vector6);
     std::cout << "loopNoiseQueue   =   " << noiseScore << std::endl;
@@ -443,8 +443,8 @@ void addLoopFactor()
     for (int i = 0; i < (int)loopIndexQueue.size(); ++i)
     {
 
-        int indexFrom = loopIndexQueue[i].first; //   cur
-        int indexTo = loopIndexQueue[i].second;  //    pre
+        int indexFrom = loopIndexQueue[i].first; // cur
+        int indexTo = loopIndexQueue[i].second;  // pre
 
         gtsam::Pose3 poseBetween = loopPoseQueue[i];
         gtsam::noiseModel::Diagonal::shared_ptr noiseBetween = loopNoiseQueue[i];
@@ -508,19 +508,19 @@ void lateral_gradient_calculate(double &lateral_gradient_)
 void saveKeyFramesAndFactor()
 {
 
-    longitudinal_gradient_calculate(longitudinal_gradient);
+    //longitudinal_gradient_calculate(longitudinal_gradient);
 
-    lateral_gradient_calculate(lateral_gradient);
+    //lateral_gradient_calculate(lateral_gradient);
 
-    vecgravity.push_back(state_point.grav);
+    //vecgravity.push_back(state_point.grav);
     
 
     addOdomFactor();
 
-    addGravityFactor();
+    //addGravityFactor();
 
     // if(abs(longitudinal_gradient)<0.5 || abs(lateral_gradient)<0.5)
-    addWlheightFactor();
+    //addWlheightFactor();
 
     addLoopFactor();
  
