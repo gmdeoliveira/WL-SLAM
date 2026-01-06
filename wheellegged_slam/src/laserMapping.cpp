@@ -745,13 +745,16 @@ void OdometryandMappingThread()
             
             getCurPose(state_point); // Update transformTobeMapped[更新transformTobeMapped]
             /*back end*/
-            // 1. Calculate the pose transformation between the current frame and the previous frame. If the transformation is too small, do not set it as a keyframe; otherwise, set it as a keyframe[1.计算当前帧与前一帧位姿变换，如果变化太小，不设为关键帧，反之设为关键帧]
+            // 1. Calculate the pose transformation between the current frame and the previous frame. If the transformation is too small, do not set it as a keyframe; 
+            // otherwise, set it as a keyframe[1.计算当前帧与前一帧位姿变换，如果变化太小，不设为关键帧，反之设为关键帧]
             // 2. Add laser odometry factor, GPS factor, and closed-loop factor[2.添加激光里程计因子、GPS因子、闭环因子]
             // 3. Optimize the factor graph[3.执行因子图优化]
             // 4. Obtain the optimized pose and pose covariance for the current frame[4.获取当前帧优化后的位姿和, 位姿协方差]
-            // 5. Add cloudKeyPoses3D and cloudKeyPoses6D, update transformTobeMapped, and add the corner and planar point sets for the current keyframe[5.添加cloudKeyPoses3D，cloudKeyPoses6D，更新transformTobeMapped，添加当前关键帧的角点、平面点集合]
+            // 5. Add cloudKeyPoses3D and cloudKeyPoses6D, update transformTobeMapped, and add the corner and planar point sets for the current keyframe
+            // [5.添加cloudKeyPoses3D，cloudKeyPoses6D，更新transformTobeMapped，添加当前关键帧的角点、平面点集合]
             saveKeyFramesAndFactor();
-            // Update the poses of all variable nodes in the factor graph, i.e., the poses of all historical keyframes, update the odometry trajectory, and reconstruct the ikdtree[更新因子图中所有变量节点的位姿，也就是所有历史关键帧的位姿，更新里程计轨迹， 重构ikdtree]
+            // Update the poses of all variable nodes in the factor graph, i.e., the poses of all historical keyframes, update the odometry trajectory, and reconstruct the ikdtree
+            // [更新因子图中所有变量节点的位姿，也就是所有历史关键帧的位姿，更新里程计轨迹， 重构ikdtree]
             correctPoses();
             
             /******* Publish odometry *******/

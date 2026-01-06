@@ -513,7 +513,6 @@ void saveKeyFramesAndFactor()
     //lateral_gradient_calculate(lateral_gradient);
 
     //vecgravity.push_back(state_point.grav);
-    
 
     addOdomFactor();
 
