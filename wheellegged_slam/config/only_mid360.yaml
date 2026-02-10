@@ -33,4 +33,32 @@ pcd_save:
     pcd_save_en: true
     interval: -1                 # how many LiDAR frames saved in each pcd file; 
                                  # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.
+
+# Keyframe selection
+surroundingkeyframeAddingDistThreshold: 0.5
+surroundingkeyframeAddingAngleThreshold: 0.2
+surroundingKeyframeDensity: 1.0
+surroundingKeyframeSearchRadius: 50.0
+
+# Loop closure
 loopClosureEnableFlag: false
+loopClosureFrequency: 0.5
+surroundingKeyframeSize: 50
+historyKeyframeSearchRadius: 15.0
+historyKeyframeSearchTimeDiff: 60.0
+historyKeyframeSearchNum: 25
+historyKeyframeFitnessScore: 0.3
+
+# Visualization
+globalMapVisualizationSearchRadius: 50.0
+globalMapVisualizationPoseDensity: 10.0
+globalMapVisualizationLeafSize: 1.0
+
+# ikd-tree
+visulize_IkdtreeMap: false
+recontructKdTree: true
+
+# ICP
+mappingSurfLeafSize: 0.2
+numberOfCores: 4
+mappingProcessInterval: 0.15

@@ -82,9 +82,6 @@ M3D Lidar_R_wrt_IMU(Eye3d);
 /*** EKF inputs and output ***/
 MeasureGroup Measures;
 
-
-
-
 Eigen::Vector3d pos_lid; //Estimated position in world frame[估计的W系下的位置]
 
 nav_msgs::Path path;
@@ -100,7 +97,6 @@ ros::Publisher pubLaserCloudMap;
 ros::Publisher pubOdomAftMapped;
 ros::Publisher pubPath;
 ros::Publisher pubgradient;
-
 
 void SigHandle(int sig)
 {
@@ -431,35 +427,56 @@ void publish_frame_world(const ros::Publisher &pubLaserCloudFull_)
 
     /**************** save map ****************/
     /* 1. make sure you have enough memories
-    /* 2. noted that pcd save will influence the real-time performences **/
+    /* 2. pcd save will largely influence the real-time performences **/
     if (pcd_save_en)
     {
-        int size = feats_undistort->points.size();
-        PointCloudXYZI::Ptr laserCloudWorld(
-            new PointCloudXYZI(size, 1));
+        // === Method 1: Save the loop-closure-corrected global map ===
+        // Reconstruct the full map from keyframe point clouds and their
+        // final (optimized) 6D poses. This is the CORRECT map when loop
+        // closure is enabled.
+        pcl::PointCloud<PointType>::Ptr globalMapCorrected(new pcl::PointCloud<PointType>());
+        pcl::VoxelGrid<PointType> downSizeFilterGlobalMap;
+        downSizeFilterGlobalMap.setLeafSize(0.2, 0.2, 0.2); // adjust leaf size as needed
 
-        for (int i = 0; i < size; i++)
+        //cout << "Reconstructing corrected global map from " 
+        //     << cloudKeyPoses6D->size() << " keyframes..." << endl;
+
+        for (size_t i = 0; i < cloudKeyPoses6D->size(); ++i)
         {
-            pointBodyToWorld(&feats_undistort->points[i],
-                             &laserCloudWorld->points[i]);
+            *globalMapCorrected += *transformPointCloud(surfCloudKeyFrames[i], 
+                                                        &cloudKeyPoses6D->points[i]);
         }
 
-        static int scan_wait_num = 0;
-        scan_wait_num++;
+        // Downsample the global map to reduce file size
+        pcl::PointCloud<PointType>::Ptr globalMapCorrectedDS(new pcl::PointCloud<PointType>());
+        downSizeFilterGlobalMap.setInputCloud(globalMapCorrected);
+        downSizeFilterGlobalMap.filter(*globalMapCorrectedDS);
 
-        if (scan_wait_num % 4 == 0)
-            *pcl_wait_save += *laserCloudWorld;
+        string file_name = string("GlobalMap.pcd");
+        string all_points_dir(string(string(ROOT_DIR) + "PCD/") + file_name);
+        pcl::PCDWriter pcd_writer;
+        //cout << "Corrected global map (" << globalMapCorrectedDS->size() 
+        //     << " points) saved to /PCD/" << file_name << endl;
+        pcd_writer.writeBinary(all_points_dir, *globalMapCorrectedDS);
 
-        if (pcl_wait_save->size() > 0 && pcd_save_interval > 0 && scan_wait_num >= pcd_save_interval)
-        {
-            pcd_index++;
-            string all_points_dir(string(string(ROOT_DIR) + "PCD/scans_") + to_string(pcd_index) + string(".pcd"));
-            pcl::PCDWriter pcd_writer;
-            cout << "current scan saved to /PCD/" << all_points_dir << endl;
-            pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
-            pcl_wait_save->clear();
-            scan_wait_num = 0;
-        }
+        // === Method 2: Also save the ikd-tree map (for reference) ===
+        PointVector().swap(ikdtree.PCL_Storage);
+        ikdtree.flatten(ikdtree.Root_Node, ikdtree.PCL_Storage, NOT_RECORD);
+        featsFromMap->clear();
+        featsFromMap->points = ikdtree.PCL_Storage;
+        //cout << "ikdtree size: " << featsFromMap->points.size() << endl;
+        string file_name1 = string("GlobalMap_ikdtree.pcd");
+        pcl::PCDWriter pcd_writer1;
+        string all_points_dir1(string(string(ROOT_DIR) + "PCD/") + file_name1);
+        //cout << "ikd-tree map saved to /PCD/" << file_name1 << endl;
+        pcd_writer1.writeBinary(all_points_dir1, *featsFromMap);
+
+        // === Method 3: Save the corrected trajectory ===
+        string traj_file = string(string(ROOT_DIR) + "PCD/trajectory.pcd");
+        pcl::PCDWriter traj_writer;
+        traj_writer.writeBinary(traj_file, *cloudKeyPoses6D);
+        //cout << "Trajectory (" << cloudKeyPoses6D->size() 
+        //     << " poses) saved to /PCD/trajectory.pcd" << endl;
     }
 }
 
@@ -569,15 +586,15 @@ void publish_gradient(const ros::Publisher pubgradient)
 
 
 void recontructIKdTree(){
-    if(recontructKdTree  &&  updateKdtreeCount >  0){
-        /*** if path is too large, the rvis will crash ***/
+    if(recontructKdTree && updateKdtreeCount > 0){
+        /*** if path is too large, the rviz will crash ***/
         pcl::KdTreeFLANN<PointType>::Ptr kdtreeGlobalMapPoses(new pcl::KdTreeFLANN<PointType>());
         pcl::PointCloud<PointType>::Ptr subMapKeyPoses(new pcl::PointCloud<PointType>());
         pcl::PointCloud<PointType>::Ptr subMapKeyPosesDS(new pcl::PointCloud<PointType>());
         pcl::PointCloud<PointType>::Ptr subMapKeyFrames(new pcl::PointCloud<PointType>());
         pcl::PointCloud<PointType>::Ptr subMapKeyFramesDS(new pcl::PointCloud<PointType>());
 
-        // kdtree查找最近一帧关键帧相邻的关键帧集合
+        // KDTree finds the set of keyframes adjacent to the most recent keyframe. [kdtree查找最近一帧关键帧相邻的关键帧集合]
         std::vector<int> pointSearchIndGlobalMap;
         std::vector<float> pointSearchSqDisGlobalMap;
         mtx.lock();
@@ -586,23 +603,23 @@ void recontructIKdTree(){
         mtx.unlock();
 
         for (int i = 0; i < (int)pointSearchIndGlobalMap.size(); ++i)
-            subMapKeyPoses->push_back(cloudKeyPoses3D->points[pointSearchIndGlobalMap[i]]);     //  subMap的pose集合
-        // 降采样
+            subMapKeyPoses->push_back(cloudKeyPoses3D->points[pointSearchIndGlobalMap[i]]); // The pose set of a subMap. [subMap的pose集合]
+        // Downsampling. [降采样]
         pcl::VoxelGrid<PointType> downSizeFilterSubMapKeyPoses;
         downSizeFilterSubMapKeyPoses.setLeafSize(globalMapVisualizationPoseDensity, globalMapVisualizationPoseDensity, globalMapVisualizationPoseDensity); // for global map visualization
         downSizeFilterSubMapKeyPoses.setInputCloud(subMapKeyPoses);
-        downSizeFilterSubMapKeyPoses.filter(*subMapKeyPosesDS);         //  subMap poses  downsample
-        // 提取局部相邻关键帧对应的特征点云
+        downSizeFilterSubMapKeyPoses.filter(*subMapKeyPosesDS); // subMap poses downsample
+        // Extract the feature point cloud corresponding to locally adjacent keyframes. [提取局部相邻关键帧对应的特征点云]
         for (int i = 0; i < (int)subMapKeyPosesDS->size(); ++i)
         {
-            // 距离过大
+            // Distance too large [距离过大]
             if (pointDistance(subMapKeyPosesDS->points[i], cloudKeyPoses3D->back()) > globalMapVisualizationSearchRadius)
                     continue;
             int thisKeyInd = (int)subMapKeyPosesDS->points[i].intensity;
             // *globalMapKeyFrames += *transformPointCloud(cornerCloudKeyFrames[thisKeyInd],  &cloudKeyPoses6D->points[thisKeyInd]);
             *subMapKeyFrames += *transformPointCloud(surfCloudKeyFrames[thisKeyInd], &cloudKeyPoses6D->points[thisKeyInd]); //  fast_lio only use  surfCloud
         }
-        // 降采样，发布
+        // Downsampling, publish. [降采样，发布]
         pcl::VoxelGrid<PointType> downSizeFilterGlobalMapKeyFrames;                                                                                   // for global map visualization
         downSizeFilterGlobalMapKeyFrames.setLeafSize(globalMapVisualizationLeafSize, globalMapVisualizationLeafSize, globalMapVisualizationLeafSize); // for global map visualization
         downSizeFilterGlobalMapKeyFrames.setInputCloud(subMapKeyFrames);
@@ -617,11 +634,12 @@ void recontructIKdTree(){
         kdtree_size_st = ikdtree.size();
         std::cout << "featsFromMapNum  =  "   << featsFromMapNum   <<  "\t" << " kdtree_size_st   =  "  <<  kdtree_size_st  << std::endl;
     }
-        updateKdtreeCount ++ ; 
+    updateKdtreeCount ++ ; 
 }
 
 
-// Update the poses of all variable nodes in the factor graph, which are the poses of all historical keyframes, and update the odometry trajectory[更新因子图中所有变量节点的位姿，也就是所有历史关键帧的位姿，更新里程计轨迹]
+// Update the poses of all variable nodes in the factor graph, which are the poses of all historical keyframes, and update the odometry trajectory
+// [更新因子图中所有变量节点的位姿，也就是所有历史关键帧的位姿，更新里程计轨迹]
 void correctPoses()
 {
     if (cloudKeyPoses3D->points.empty())
@@ -649,7 +667,7 @@ void correctPoses()
             // Update the odometry trajectory[更新里程计轨迹]
             updatePath(cloudKeyPoses6D->points[i]);
         }
-        // Clear the local map and reconstruct the ikdtree submap[清空局部map， reconstruct  ikdtree submap]
+        // Clear the local map and reconstruct the ikdtree submap[清空局部map，reconstruct ikdtree submap]
         recontructIKdTree();
         ROS_INFO("ISMA2 Update");
         aLoopIsClosed = false;
@@ -744,18 +762,20 @@ void OdometryandMappingThread()
 
             
             getCurPose(state_point); // Update transformTobeMapped[更新transformTobeMapped]
-            /*back end*/
-            // 1. Calculate the pose transformation between the current frame and the previous frame. If the transformation is too small, do not set it as a keyframe; 
-            // otherwise, set it as a keyframe[1.计算当前帧与前一帧位姿变换，如果变化太小，不设为关键帧，反之设为关键帧]
-            // 2. Add laser odometry factor, GPS factor, and closed-loop factor[2.添加激光里程计因子、GPS因子、闭环因子]
-            // 3. Optimize the factor graph[3.执行因子图优化]
-            // 4. Obtain the optimized pose and pose covariance for the current frame[4.获取当前帧优化后的位姿和, 位姿协方差]
-            // 5. Add cloudKeyPoses3D and cloudKeyPoses6D, update transformTobeMapped, and add the corner and planar point sets for the current keyframe
-            // [5.添加cloudKeyPoses3D，cloudKeyPoses6D，更新transformTobeMapped，添加当前关键帧的角点、平面点集合]
-            saveKeyFramesAndFactor();
-            // Update the poses of all variable nodes in the factor graph, i.e., the poses of all historical keyframes, update the odometry trajectory, and reconstruct the ikdtree
-            // [更新因子图中所有变量节点的位姿，也就是所有历史关键帧的位姿，更新里程计轨迹， 重构ikdtree]
-            correctPoses();
+            if (saveFrame()){ //[Test to optimize the algorithm]
+                /*back end*/
+                // 1. Calculate the pose transformation between the current frame and the previous frame. If the transformation is too small, do not set it as a keyframe; 
+                // otherwise, set it as a keyframe[1.计算当前帧与前一帧位姿变换，如果变化太小，不设为关键帧，反之设为关键帧]
+                // 2. Add laser odometry factor, GPS factor, and closed-loop factor[2.添加激光里程计因子、GPS因子、闭环因子]
+                // 3. Optimize the factor graph[3.执行因子图优化]
+                // 4. Obtain the optimized pose and pose covariance for the current frame[4.获取当前帧优化后的位姿和, 位姿协方差]
+                // 5. Add cloudKeyPoses3D and cloudKeyPoses6D, update transformTobeMapped, and add the corner and planar point sets for the current keyframe
+                // [5.添加cloudKeyPoses3D，cloudKeyPoses6D，更新transformTobeMapped，添加当前关键帧的角点、平面点集合]
+                saveKeyFramesAndFactor();
+                // Update the poses of all variable nodes in the factor graph, i.e., the poses of all historical keyframes, update the odometry trajectory, and reconstruct the ikdtree
+                // [更新因子图中所有变量节点的位姿，也就是所有历史关键帧的位姿，更新里程计轨迹， 重构ikdtree]
+                correctPoses();
+            }
             
             /******* Publish odometry *******/
             publish_odometry(pubOdomAftMapped);
@@ -794,7 +814,8 @@ int main(int argc, char **argv)
     nh.param<bool>("publish/scan_publish_en", scan_pub_en, true);            // Publish the topic of the point cloud currently being scanned[是否发布当前正在扫描的点云的topic]
     // Publish the topic of the point cloud that has been registered to the IMU coordinate system after motion distortion correction[是否发布经过运动畸变校正注册到IMU坐标系的点云的topic]
     nh.param<bool>("publish/dense_publish_en", dense_pub_en, true);          
-    // Publish the topic of the point cloud registered with the IMU coordinate system after motion distortion correction. This variable and the previous variable must both be true for publishing[是否发布经过运动畸变校正注册到IMU坐标系的点云的topic，需要该变量和上一个变量同时为true才发布]
+    // Publish the topic of the point cloud registered with the IMU coordinate system after motion distortion correction. 
+    // This variable and the previous variable must both be true for publishing[是否发布经过运动畸变校正注册到IMU坐标系的点云的topic，需要该变量和上一个变量同时为true才发布]
     nh.param<bool>("publish/scan_bodyframe_pub_en", scan_body_pub_en, true); 
     nh.param<int>("max_iteration", NUM_MAX_ITERATIONS, 4);                   // Maximum number of iterations for Kalman filtering[卡尔曼滤波的最大迭代次数]
     nh.param<string>("map_file_path", map_file_path, "");                    // Map save path[地图保存路径]
@@ -825,7 +846,8 @@ int main(int argc, char **argv)
     nh.param<bool>("mapping/extrinsic_est_en", extrinsic_est_en, true);
     nh.param<bool>("pcd_save/pcd_save_en", pcd_save_en, false); // Whether to save point cloud map to PCD file [是否将点云地图保存到PCD文件]
     nh.param<int>("pcd_save/interval", pcd_save_interval, -1);
-    nh.param<vector<double>>("mapping/extrinsic_T", extrinT, vector<double>()); // Extrinsic parameter T of LiDAR relative to IMU (i.e., LiDAR coordinates in IMU coordinate system)[雷达相对于IMU的外参T（即雷达在IMU坐标系中的坐标）]
+    // Extrinsic parameter T of LiDAR relative to IMU (i.e., LiDAR coordinates in IMU coordinate system)[雷达相对于IMU的外参T（即雷达在IMU坐标系中的坐标）]
+    nh.param<vector<double>>("mapping/extrinsic_T", extrinT, vector<double>()); 
     nh.param<vector<double>>("mapping/extrinsic_R", extrinR, vector<double>()); // Extrinsic parameter R of LiDAR relative to IMU[雷达相对于IMU的外参R]
 
 
@@ -928,12 +950,15 @@ int main(int argc, char **argv)
         rate.sleep();
     }
 
+
+    ros::shutdown();
     loopthread.join();
     publishthread.join();
     
     /**************** save map ****************/
     /* 1. make sure you have enough memories
     /* 2. pcd save will largely influence the real-time performences **/
+
     cout << "pcl_wait_save = " << pcl_wait_save->size() << endl; //[DEBUG]
 
     if (pcl_wait_save->size() > 0 && pcd_save_en)
