@@ -35,6 +35,13 @@
 int add_point_size = 0, kdtree_delete_counter = 0;
 bool pcd_save_en = false, time_sync_en = false, extrinsic_est_en = true, path_en = true;
 int kdtree_size_st = 0;
+
+/*** Map Saving Mode Flags ***/
+bool save_corrected_map = true;   // Save the loop-closure-corrected global map from keyframes
+bool save_ikdtree_map = false;    // Save the ikd-tree local map
+bool save_raw_map = false;        // Save the raw accumulated (pcl_wait_save) map
+bool save_trajectory = false;     // Save the optimized trajectory (6D poses)
+float save_map_leaf_size = 0.2;   // Voxel leaf size for downsampling the corrected map
 /**************************/
 
 float res_last[100000] = {0.0};
@@ -425,58 +432,37 @@ void publish_frame_world(const ros::Publisher &pubLaserCloudFull_)
         publish_count -= PUBFRAME_PERIOD;
     }
 
-    /**************** save map ****************/
-    /* 1. make sure you have enough memories
-    /* 2. pcd save will largely influence the real-time performences **/
-    if (pcd_save_en)
+    /**************** save map (runtime accumulation for raw map) ****************/
+    /* Only accumulate raw point cloud if save_raw_map is enabled.
+    /* The corrected map, ikd-tree map, and trajectory are saved at shutdown. **/
+    if (pcd_save_en && save_raw_map)
     {
-        // === Method 1: Save the loop-closure-corrected global map ===
-        // Reconstruct the full map from keyframe point clouds and their
-        // final (optimized) 6D poses. This is the CORRECT map when loop
-        // closure is enabled.
-        pcl::PointCloud<PointType>::Ptr globalMapCorrected(new pcl::PointCloud<PointType>());
-        pcl::VoxelGrid<PointType> downSizeFilterGlobalMap;
-        downSizeFilterGlobalMap.setLeafSize(0.2, 0.2, 0.2); // adjust leaf size as needed
+        int size = feats_undistort->points.size();
+        PointCloudXYZI::Ptr laserCloudWorld(
+            new PointCloudXYZI(size, 1));
 
-        //cout << "Reconstructing corrected global map from " 
-        //     << cloudKeyPoses6D->size() << " keyframes..." << endl;
-
-        for (size_t i = 0; i < cloudKeyPoses6D->size(); ++i)
+        for (int i = 0; i < size; i++)
         {
-            *globalMapCorrected += *transformPointCloud(surfCloudKeyFrames[i], 
-                                                        &cloudKeyPoses6D->points[i]);
+            pointBodyToWorld(&feats_undistort->points[i],
+                             &laserCloudWorld->points[i]);
         }
 
-        // Downsample the global map to reduce file size
-        pcl::PointCloud<PointType>::Ptr globalMapCorrectedDS(new pcl::PointCloud<PointType>());
-        downSizeFilterGlobalMap.setInputCloud(globalMapCorrected);
-        downSizeFilterGlobalMap.filter(*globalMapCorrectedDS);
+        static int scan_wait_num = 0;
+        scan_wait_num++;
 
-        string file_name = string("GlobalMap.pcd");
-        string all_points_dir(string(string(ROOT_DIR) + "PCD/") + file_name);
-        pcl::PCDWriter pcd_writer;
-        //cout << "Corrected global map (" << globalMapCorrectedDS->size() 
-        //     << " points) saved to /PCD/" << file_name << endl;
-        pcd_writer.writeBinary(all_points_dir, *globalMapCorrectedDS);
+        if (scan_wait_num % 4 == 0)
+            *pcl_wait_save += *laserCloudWorld;
 
-        // === Method 2: Also save the ikd-tree map (for reference) ===
-        PointVector().swap(ikdtree.PCL_Storage);
-        ikdtree.flatten(ikdtree.Root_Node, ikdtree.PCL_Storage, NOT_RECORD);
-        featsFromMap->clear();
-        featsFromMap->points = ikdtree.PCL_Storage;
-        //cout << "ikdtree size: " << featsFromMap->points.size() << endl;
-        string file_name1 = string("GlobalMap_ikdtree.pcd");
-        pcl::PCDWriter pcd_writer1;
-        string all_points_dir1(string(string(ROOT_DIR) + "PCD/") + file_name1);
-        //cout << "ikd-tree map saved to /PCD/" << file_name1 << endl;
-        pcd_writer1.writeBinary(all_points_dir1, *featsFromMap);
-
-        // === Method 3: Save the corrected trajectory ===
-        string traj_file = string(string(ROOT_DIR) + "PCD/trajectory.pcd");
-        pcl::PCDWriter traj_writer;
-        traj_writer.writeBinary(traj_file, *cloudKeyPoses6D);
-        //cout << "Trajectory (" << cloudKeyPoses6D->size() 
-        //     << " poses) saved to /PCD/trajectory.pcd" << endl;
+        if (pcl_wait_save->size() > 0 && pcd_save_interval > 0 && scan_wait_num >= pcd_save_interval)
+        {
+            pcd_index++;
+            string all_points_dir(string(string(ROOT_DIR) + "PCD/scans_") + to_string(pcd_index) + string(".pcd"));
+            pcl::PCDWriter pcd_writer;
+            cout << "current scan saved to /PCD/" << all_points_dir << endl;
+            pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
+            pcl_wait_save->clear();
+            scan_wait_num = 0;
+        }
     }
 }
 
@@ -846,6 +832,13 @@ int main(int argc, char **argv)
     nh.param<bool>("mapping/extrinsic_est_en", extrinsic_est_en, true);
     nh.param<bool>("pcd_save/pcd_save_en", pcd_save_en, false); // Whether to save point cloud map to PCD file [是否将点云地图保存到PCD文件]
     nh.param<int>("pcd_save/interval", pcd_save_interval, -1);
+
+    // Map saving mode selection
+    nh.param<bool>("pcd_save/save_corrected_map", save_corrected_map, true);   // Corrected global map from keyframes + optimized poses
+    nh.param<bool>("pcd_save/save_ikdtree_map", save_ikdtree_map, false);      // ikd-tree local map
+    nh.param<bool>("pcd_save/save_raw_map", save_raw_map, false);              // Raw accumulated point cloud (no loop closure correction)
+    nh.param<bool>("pcd_save/save_trajectory", save_trajectory, false);        // Optimized 6D trajectory
+    nh.param<float>("pcd_save/save_map_leaf_size", save_map_leaf_size, 0.2);   // Voxel leaf size for corrected map downsampling
     // Extrinsic parameter T of LiDAR relative to IMU (i.e., LiDAR coordinates in IMU coordinate system)[雷达相对于IMU的外参T（即雷达在IMU坐标系中的坐标）]
     nh.param<vector<double>>("mapping/extrinsic_T", extrinT, vector<double>()); 
     nh.param<vector<double>>("mapping/extrinsic_R", extrinR, vector<double>()); // Extrinsic parameter R of LiDAR relative to IMU[雷达相对于IMU的外参R]
@@ -899,6 +892,15 @@ int main(int argc, char **argv)
 
     cout << "Lidar_type: " << p_pre->lidar_type << endl;
     cout << "pcl_save_en = " << pcd_save_en << endl;
+    if (pcd_save_en)
+    {
+        cout << "Map saving modes:" << endl;
+        cout << "  save_corrected_map: " << (save_corrected_map ? "ON" : "OFF") << endl;
+        cout << "  save_ikdtree_map:   " << (save_ikdtree_map   ? "ON" : "OFF") << endl;
+        cout << "  save_raw_map:       " << (save_raw_map       ? "ON" : "OFF") << endl;
+        cout << "  save_trajectory:    " << (save_trajectory    ? "ON" : "OFF") << endl;
+        cout << "  save_map_leaf_size: " << save_map_leaf_size << endl;
+    }
     // Initialize path header (including timestamp and frame id), path is used to save the odometry trajectory[初始化path的header（包括时间戳和帧id），path用于保存odemetry的路径]
     path.header.stamp = ros::Time::now();
     path.header.frame_id = "camera_init";
@@ -955,42 +957,130 @@ int main(int argc, char **argv)
     loopthread.join();
     publishthread.join();
     
-    /**************** save map ****************/
-    /* 1. make sure you have enough memories
-    /* 2. pcd save will largely influence the real-time performences **/
-
-    cout << "pcl_wait_save = " << pcl_wait_save->size() << endl; //[DEBUG]
-
-    if (pcl_wait_save->size() > 0 && pcd_save_en)
+    /**************** save map (parameterized) ****************/
+    /* Each map saving method can be independently enabled/disabled
+    /* via the pcd_save/ parameters in the YAML config file.     **/
+    if (pcd_save_en)
     {
-        cout << "Saving remaining point cloud to pcd file ..." << endl; //[DEBUG]
-        pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
-        for (size_t i = 1; i <= pcd_index; i++)
+        cout << endl;
+        cout << "========================================" << endl;
+        cout << "         MAP SAVING STARTED             " << endl;
+        cout << "========================================" << endl;
+        cout << "  save_corrected_map: " << (save_corrected_map ? "ON" : "OFF") << endl;
+        cout << "  save_ikdtree_map:   " << (save_ikdtree_map   ? "ON" : "OFF") << endl;
+        cout << "  save_raw_map:       " << (save_raw_map       ? "ON" : "OFF") << endl;
+        cout << "  save_trajectory:    " << (save_trajectory    ? "ON" : "OFF") << endl;
+        cout << "  save_map_leaf_size: " << save_map_leaf_size << endl;
+        cout << "========================================" << endl;
+
+        // -------------------------------------------------------
+        // [1] Corrected Keyframe Map (best with loop closure)
+        //     Reconstructs the full global map from keyframe point
+        //     clouds using the final optimized 6D poses.
+        // -------------------------------------------------------
+        if (save_corrected_map)
         {
-            pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_temp(new pcl::PointCloud<pcl::PointXYZ>);
-            string all_points_dir(string(string(ROOT_DIR) + "PCD/scans_") + to_string(i) + string(".pcd"));
-            pcl::PCDReader reader;
-            reader.read(all_points_dir, *cloud_temp);
-            *cloud = *cloud + *cloud_temp;
+            cout << "[1/4] Saving corrected keyframe map..." << endl;
+            pcl::PointCloud<PointType>::Ptr globalMapCorrected(new pcl::PointCloud<PointType>());
+
+            cout << "  Reconstructing from " << cloudKeyPoses6D->size() << " keyframes..." << endl;
+            for (size_t i = 0; i < cloudKeyPoses6D->size(); ++i)
+            {
+                *globalMapCorrected += *transformPointCloud(surfCloudKeyFrames[i],
+                                                            &cloudKeyPoses6D->points[i]);
+            }
+
+            // Downsample the global map
+            pcl::PointCloud<PointType>::Ptr globalMapDS(new pcl::PointCloud<PointType>());
+            pcl::VoxelGrid<PointType> downSizeFilterGlobalMap;
+            downSizeFilterGlobalMap.setLeafSize(save_map_leaf_size, save_map_leaf_size, save_map_leaf_size);
+            downSizeFilterGlobalMap.setInputCloud(globalMapCorrected);
+            downSizeFilterGlobalMap.filter(*globalMapDS);
+
+            string file_path = string(ROOT_DIR) + "PCD/GlobalMap_corrected.pcd";
+            pcl::PCDWriter writer;
+            writer.writeBinary(file_path, *globalMapDS);
+            cout << "  -> Saved " << globalMapDS->size() << " points to PCD/GlobalMap_corrected.pcd" << endl;
         }
 
-        string file_name = string("GlobalMap.pcd");
-        string all_points_dir(string(string(ROOT_DIR) + "PCD/") + file_name);
-        pcl::PCDWriter pcd_writer;
-        cout << "current scan saved to /PCD/" << file_name << endl;
-        pcd_writer.writeBinary(all_points_dir, *pcl_wait_save); //[just a test]
+        // -------------------------------------------------------
+        // [2] ikd-tree Map
+        //     Flattens the current ikd-tree (local submap around
+        //     the latest pose). Fast but may be incomplete.
+        // -------------------------------------------------------
+        if (save_ikdtree_map)
+        {
+            cout << "[2/4] Saving ikd-tree map..." << endl;
+            PointVector().swap(ikdtree.PCL_Storage);
+            ikdtree.flatten(ikdtree.Root_Node, ikdtree.PCL_Storage, NOT_RECORD);
+            featsFromMap->clear();
+            featsFromMap->points = ikdtree.PCL_Storage;
 
-        //////////////////////////////////////
-        PointVector().swap(ikdtree.PCL_Storage);
-        ikdtree.flatten(ikdtree.Root_Node, ikdtree.PCL_Storage, NOT_RECORD);
-        featsFromMap->clear();
-        featsFromMap->points = ikdtree.PCL_Storage;
-        std::cout << "ikdtree size: " << featsFromMap->points.size() << std::endl;
-        string file_name1 = string("GlobalMap_ikdtree.pcd");
-        pcl::PCDWriter pcd_writer1;
-        string all_points_dir1(string(string(ROOT_DIR) + "PCD/") + file_name1);
-        cout << "current scan saved to /PCD/" << file_name1 << endl;
-        pcd_writer1.writeBinary(all_points_dir1, *featsFromMap);
+            string file_path = string(ROOT_DIR) + "PCD/GlobalMap_ikdtree.pcd";
+            pcl::PCDWriter writer;
+            writer.writeBinary(file_path, *featsFromMap);
+            cout << "  -> Saved " << featsFromMap->points.size() << " points to PCD/GlobalMap_ikdtree.pcd" << endl;
+        }
+
+        // -------------------------------------------------------
+        // [3] Raw Accumulated Map
+        //     Saves the point cloud accumulated during runtime
+        //     via pcl_wait_save. NOT corrected by loop closure.
+        //     Also merges any intermediate scan files.
+        // -------------------------------------------------------
+        if (save_raw_map)
+        {
+            cout << "[3/4] Saving raw accumulated map..." << endl;
+
+            // Merge any intermediate scan files that were written during runtime
+            if (pcd_index > 0)
+            {
+                pcl::PointCloud<PointType>::Ptr cloud_merged(new pcl::PointCloud<PointType>());
+                for (size_t i = 1; i <= (size_t)pcd_index; i++)
+                {
+                    pcl::PointCloud<PointType>::Ptr cloud_temp(new pcl::PointCloud<PointType>());
+                    string scan_path = string(ROOT_DIR) + "PCD/scans_" + to_string(i) + ".pcd";
+                    pcl::PCDReader reader;
+                    reader.read(scan_path, *cloud_temp);
+                    *cloud_merged += *cloud_temp;
+                }
+                // Add any remaining points not yet flushed to a scan file
+                *cloud_merged += *pcl_wait_save;
+
+                string file_path = string(ROOT_DIR) + "PCD/GlobalMap_raw.pcd";
+                pcl::PCDWriter writer;
+                writer.writeBinary(file_path, *cloud_merged);
+                cout << "  -> Saved " << cloud_merged->size() << " points to PCD/GlobalMap_raw.pcd" << endl;
+            }
+            else if (pcl_wait_save->size() > 0)
+            {
+                string file_path = string(ROOT_DIR) + "PCD/GlobalMap_raw.pcd";
+                pcl::PCDWriter writer;
+                writer.writeBinary(file_path, *pcl_wait_save);
+                cout << "  -> Saved " << pcl_wait_save->size() << " points to PCD/GlobalMap_raw.pcd" << endl;
+            }
+            else
+            {
+                cout << "  -> No raw points accumulated, skipping." << endl;
+            }
+        }
+
+        // -------------------------------------------------------
+        // [4] Trajectory
+        //     Saves the optimized 6D poses of all keyframes.
+        // -------------------------------------------------------
+        if (save_trajectory)
+        {
+            cout << "[4/4] Saving trajectory..." << endl;
+            string file_path = string(ROOT_DIR) + "PCD/trajectory.pcd";
+            pcl::PCDWriter writer;
+            writer.writeBinary(file_path, *cloudKeyPoses6D);
+            cout << "  -> Saved " << cloudKeyPoses6D->size() << " poses to PCD/trajectory.pcd" << endl;
+        }
+
+        cout << "========================================" << endl;
+        cout << "         MAP SAVING COMPLETE            " << endl;
+        cout << "========================================" << endl;
     }
 
     return 0;

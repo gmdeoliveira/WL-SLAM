@@ -33,6 +33,13 @@ pcd_save:
     pcd_save_en: true
     interval: -1                 # how many LiDAR frames saved in each pcd file; 
                                  # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.
+    # --- Map saving mode selection ---
+    # Enable/disable each map output independently. Multiple can be enabled at the same time.
+    save_corrected_map: true     # [RECOMMENDED] Reconstructs the global map from keyframes using optimized poses (loop-closure corrected)
+    save_ikdtree_map: false      # Saves the ikd-tree local submap (fast, but only covers the area around the last pose)
+    save_raw_map: false          # Saves the raw accumulated point cloud (NOT corrected by loop closure)
+    save_trajectory: false       # Saves the optimized 6D keyframe trajectory as a PCD file
+    save_map_leaf_size: 0.2      # Voxel leaf size (meters) for downsampling the corrected map. Increase to reduce file size.
 
 # Keyframe selection
 surroundingkeyframeAddingDistThreshold: 0.5
@@ -41,7 +48,7 @@ surroundingKeyframeDensity: 1.0
 surroundingKeyframeSearchRadius: 50.0
 
 # Loop closure
-loopClosureEnableFlag: false
+loopClosureEnableFlag: true
 loopClosureFrequency: 0.5
 surroundingKeyframeSize: 50
 historyKeyframeSearchRadius: 15.0
